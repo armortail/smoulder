@@ -1,6 +1,7 @@
 using UnityEngine;
 using FireFight.Managers;
 using FireFight.Environment;
+using FireFight.Core;
 
 namespace FireFight
 {
@@ -28,9 +29,7 @@ namespace FireFight
         public bool SelectAtAim()
         {
             if (commandCamera == null) return false;
-            Ray ray = commandCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-            if (Physics.Raycast(ray, out RaycastHit hit, targetDistance, targetLayers,
-                    QueryTriggerInteraction.Ignore))
+            if (ScreenPick.RaycastCentre(commandCamera, targetDistance, targetLayers, out RaycastHit hit))
             {
                 var candidate = hit.collider.GetComponentInParent<Flammable>();
                 if (SetTarget(candidate))
@@ -70,12 +69,9 @@ namespace FireFight
 
         public static bool TryGetBounds(Flammable flammable, out Bounds bounds)
         {
-            bounds = default;
-            if (flammable == null || !flammable.isActiveAndEnabled) return false;
-            var collider = flammable.GetComponentInChildren<Collider>();
-            if (collider == null || !collider.enabled || collider.isTrigger) return false;
-            bounds = collider.bounds;
-            return true;
+            // Gameplay queries need a real solid surface: an enabled, non-trigger collider.
+            return BoundsUtil.TryGetWorldBounds(flammable, out bounds, requireSolidCollider: true)
+                && flammable.isActiveAndEnabled;
         }
 
         public static bool IsBurning(Flammable flammable)

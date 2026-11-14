@@ -97,6 +97,17 @@ namespace FireFight.Managers
         /// <summary>Total flammable objects registered in the scene.</summary>
         public int FlammableCount => flammables.Count;
 
+        /// <summary>
+        /// Read-only view of the registered flammables, so other systems (hose, NPC
+        /// AI, destination markers) can enumerate them WITHOUT a per-call
+        /// <c>FindObjectsByType&lt;Flammable&gt;()</c> scan, which allocates an array
+        /// and walks every object in the scene. Flammable keeps this list current via
+        /// <see cref="RegisterFlammable"/> / <see cref="UnregisterFlammable"/>.
+        /// Enumerate it directly; do not cache it, as entries change as objects burn
+        /// in and out.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<Flammable> Flammables => flammables;
+
         /// <summary>How many flammable objects are currently on fire.</summary>
         public int FlammableOnFireCount()
         {

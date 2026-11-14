@@ -1,6 +1,7 @@
 using UnityEngine;
 using FireFight.Managers;
 using FireFight.Environment;
+using FireFight.Core;
 using System.Collections.Generic;
 
 /// <summary>Jet and cone hoses share the fire manager's existing cooling/wetness API.</summary>
@@ -60,7 +61,7 @@ public class HoseController : MonoBehaviour
     private void AutoWire()
     {
         if (nozzlePoint == null) nozzlePoint = transform;
-        if (fireManager == null) fireManager = FindFirstObjectByType<FireManager>();
+        if (fireManager == null) fireManager = FireManagerLocator.Resolve(fireManager);
     }
 
     public void StartSpray() => IsSpraying = true;
@@ -138,9 +139,13 @@ public class HoseController : MonoBehaviour
         if (Time.time >= refreshReceiversAt)
         {
             receivers.Clear();
-            foreach (var target in FindObjectsByType<Flammable>(FindObjectsSortMode.None))
+            // Enumerate the manager's live registry instead of FindObjectsByType, which
+            // allocates an array and scans every object in the scene on each refresh.
+            var flammables = fireManager.Flammables;
+            for (int i = 0; i < flammables.Count; i++)
             {
-                if (target.fireManager != fireManager) continue;
+                var target = flammables[i];
+                if (target == null || target.fireManager != fireManager) continue;
                 var body = target.GetComponentInChildren<Collider>();
                 if (body != null) receivers.Add(new WaterReceiver { target = target, body = body });
             }

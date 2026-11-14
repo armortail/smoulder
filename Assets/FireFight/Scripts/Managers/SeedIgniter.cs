@@ -1,4 +1,5 @@
 using UnityEngine;
+using FireFight.Core;
 
 namespace FireFight.Managers
 {
@@ -35,7 +36,7 @@ namespace FireFight.Managers
             done = true;
 
             if (fireManager == null)
-                fireManager = FindFirstObjectByType<FireManager>();
+                fireManager = FireManagerLocator.Resolve(fireManager);
 
             if (fireManager == null)
             {
@@ -73,16 +74,7 @@ namespace FireFight.Managers
         /// (collider preferred, else renderer). Does NOT depend on the seed's private
         /// <c>worldBounds</c> or its <c>registered</c> flag.
         /// </summary>
-        private static bool TryComputeSeedBounds(Flammable s, out Bounds bounds)
-        {
-            var col = s.GetComponentInChildren<Collider>();
-            if (col != null) { bounds = col.bounds; return true; }
-
-            var rend = s.GetComponentInChildren<Renderer>();
-            if (rend != null) { bounds = rend.bounds; return true; }
-
-            bounds = default;
-            return false;
-        }
+        private static bool TryComputeSeedBounds(Flammable s, out Bounds bounds) =>
+            BoundsUtil.TryGetWorldBounds(s, out bounds);
     }
 }

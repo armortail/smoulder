@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.AI;
 using FireFight;
 using FireFight.Managers;
+using FireFight.Core;
 
 /// <summary>Moves one NPC and runs an explicitly commanded firefighting job.</summary>
 [DisallowMultipleComponent]
@@ -37,7 +38,7 @@ public class NPCMovement : MonoBehaviour
         agent = GetComponent<NavMeshAgent>();
         commandPath = new NavMeshPath();
         if (hose == null) hose = GetComponentInChildren<HoseController>();
-        if (fireManager == null) fireManager = FindFirstObjectByType<FireManager>();
+        if (fireManager == null) fireManager = FireManagerLocator.Resolve(fireManager);
     }
 
     public bool MoveTo(Vector3 targetPosition)
@@ -265,9 +266,14 @@ public class NPCMovement : MonoBehaviour
     private bool ContinueNearbyFireJob()
     {
         // A cone can cover several props. Do not stop merely because the first prop went out.
-        foreach (var candidate in FindObjectsByType<Flammable>(FindObjectsSortMode.None))
+        // Enumerate the manager's live registry instead of FindObjectsByType, which would
+        // allocate an array and walk every object in the scene each call.
+        if (fireManager == null) return false;
+        var flammables = fireManager.Flammables;
+        for (int i = 0; i < flammables.Count; i++)
         {
-            if (candidate.fireManager != fireManager ||
+            var candidate = flammables[i];
+            if (candidate == null || candidate.fireManager != fireManager ||
                 !NPCFireTarget.TryGetBounds(candidate, out Bounds bounds) ||
                 bounds.SqrDistance(fireZoneCenter) > fireWorkRadius * fireWorkRadius ||
                 !NPCFireTarget.TryGetBurningPoint(candidate, hose.Origin, out Vector3 point))

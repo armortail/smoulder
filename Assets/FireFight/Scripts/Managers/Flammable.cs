@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Events;
 using FireFight.Environment;
+using FireFight.Core;
 
 namespace FireFight.Managers
 {
@@ -50,10 +51,16 @@ namespace FireFight.Managers
         private Bounds worldBounds;
         private bool registered;
 
+        // The fire grid only changes on simulation ticks (a few per second), so there
+        // is no point re-scanning this object's cells every render frame. We poll at
+        // roughly the tick rate instead; with many tagged props this is the single
+        // biggest per-frame saving in the fire system.
+        private float nextPollTime;
+
         private void Start()
         {
             if (fireManager == null)
-                fireManager = FindFirstObjectByType<FireManager>();
+                fireManager = FireManagerLocator.Resolve(fireManager);
 
             if (fireManager == null)
             {
@@ -83,6 +90,12 @@ namespace FireFight.Managers
         private void Update()
         {
             if (!registered) return;
+
+            // Poll at the simulation tick rate, not every frame: the grid state these
+            // checks read only advances on ticks. Spread the first poll by a tiny
+            // per-object offset so many props do not all scan on the same frame.
+            if (Time.time < nextPollTime) return;
+            nextPollTime = Time.time + Mathf.Max(0.02f, fireManager.config.TickInterval);
 
             bool nowBurning = fireManager.IsAnyBurningInBounds(worldBounds);
 
@@ -114,17 +127,8 @@ namespace FireFight.Managers
         }
 
         /// <summary>Compute a world-space volume for this object, preferring collider over renderer.</summary>
-        private bool TryComputeBounds(out Bounds bounds)
-        {
-            var col = GetComponentInChildren<Collider>();
-            if (col != null) { bounds = col.bounds; return true; }
-
-            var rend = GetComponentInChildren<Renderer>();
-            if (rend != null) { bounds = rend.bounds; return true; }
-
-            bounds = default;
-            return false;
-        }
+        private bool TryComputeBounds(out Bounds bounds) =>
+            BoundsUtil.TryGetWorldBounds(this, out bounds);
 
         // Visualise the fuel volume in the editor.
         private void OnDrawGizmosSelected()

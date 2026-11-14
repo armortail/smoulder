@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using FireFight.Core;
 
 namespace FireFight.Managers
 {
@@ -95,7 +96,7 @@ namespace FireFight.Managers
             if (ignited || !autoIgniteFirst) return;
             ignited = true; // only attempt once
 
-            FireManager mgr = fireManager != null ? fireManager : FindFirstObjectByType<FireManager>();
+            FireManager mgr = FireManagerLocator.Resolve(fireManager);
             if (mgr == null || ignitionSeed == null)
             {
                 if (ignitionSeed == null && autoIgniteFirst)
@@ -173,28 +174,15 @@ namespace FireFight.Managers
         /// <summary>Combined world-space renderer bounds of a GameObject (for ignition volume).</summary>
         private static bool TryComputeBounds(GameObject go, out Bounds bounds)
         {
-            var col = go.GetComponentInChildren<Collider>();
-            if (col != null) { bounds = col.bounds; return true; }
-
-            var renderers = go.GetComponentsInChildren<Renderer>();
-            if (renderers.Length > 0)
-            {
-                bounds = renderers[0].bounds;
-                for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
-                return true;
-            }
-            bounds = default;
-            return false;
+            // Prefer a collider (covers the whole model), else combine child renderers.
+            if (BoundsUtil.TryGetWorldBounds(go.transform, out bounds)) return true;
+            return BoundsUtil.TryGetCombinedRendererBounds(go, out bounds);
         }
 
         /// <summary>Add a trigger-free BoxCollider sized to the object's combined renderer bounds.</summary>
         private static Collider AddBoxColliderFromRenderers(GameObject go)
         {
-            var renderers = go.GetComponentsInChildren<Renderer>();
-            if (renderers.Length == 0) return null;
-
-            Bounds worldBounds = renderers[0].bounds;
-            for (int i = 1; i < renderers.Length; i++) worldBounds.Encapsulate(renderers[i].bounds);
+            if (!BoundsUtil.TryGetCombinedRendererBounds(go, out Bounds worldBounds)) return null;
 
             var box = go.AddComponent<BoxCollider>();
             // BoxCollider center/size are in the object's LOCAL space; convert world bounds.

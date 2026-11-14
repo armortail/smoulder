@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.InputSystem;
 using FireFight.Managers;
+using FireFight.Core;
 
 namespace FireFight
 {
@@ -46,10 +47,17 @@ namespace FireFight
         {
             target = null;
             if (!TryGetDestination(npc, out Vector3 point)) return false;
+            // Use the fire manager's live registry rather than FindObjectsByType, which
+            // allocates and scans every scene object on each call.
+            FireManager manager = FireManagerLocator.Resolve(null);
+            if (manager == null) return false;
             float nearest = fireSearchRadius * fireSearchRadius;
-            foreach (var candidate in FindObjectsByType<Flammable>(FindObjectsSortMode.None))
+            var flammables = manager.Flammables;
+            for (int i = 0; i < flammables.Count; i++)
             {
-                if (!NPCFireTarget.IsBurning(candidate) || !NPCFireTarget.TryGetBounds(candidate, out Bounds bounds))
+                var candidate = flammables[i];
+                if (candidate == null || !NPCFireTarget.IsBurning(candidate) ||
+                    !NPCFireTarget.TryGetBounds(candidate, out Bounds bounds))
                     continue;
                 float distance = bounds.SqrDistance(point);
                 if (distance > nearest) continue;
@@ -68,9 +76,8 @@ namespace FireFight
 
         private void PlaceMarker(NPCMovement npc)
         {
-            Ray ray = commandCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-            if (!Physics.Raycast(ray, out RaycastHit hit, placementDistance, placementLayers,
-                    QueryTriggerInteraction.Ignore)) return;
+            if (!ScreenPick.RaycastCentre(commandCamera, placementDistance, placementLayers, out RaycastHit hit))
+                return;
             var objectHit = hit.collider.GetComponentInParent<Flammable>();
             if (Vector3.Dot(hit.normal, Vector3.up) < 0.5f && objectHit == null) return;
             TryPlaceDestination(npc, hit.point, objectHit);

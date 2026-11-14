@@ -69,6 +69,10 @@ namespace FireFight.Managers
         private readonly List<Vector4> waterColors = new List<Vector4>(BatchMax);
         private MaterialPropertyBlock mpb;
 
+        // Camera.main does a tagged-object search internally; cache it and only
+        // re-resolve when the cached camera is destroyed (e.g. a scene change).
+        private Camera cachedCamera;
+
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
@@ -96,7 +100,7 @@ namespace FireFight.Managers
             FireGrid grid = manager != null ? manager.Grid : null;
             if (grid == null) return; // grid only exists in Play mode
 
-            Camera targetCamera = Camera.main != null ? Camera.main : Camera.current;
+            Camera targetCamera = ResolveCamera();
             // Billboard toward the camera if we have one; otherwise face up.
             Quaternion facing = targetCamera != null
                 ? Quaternion.LookRotation(-targetCamera.transform.forward, Vector3.up)
@@ -158,6 +162,18 @@ namespace FireFight.Managers
             }
 
             FlushBatches();
+        }
+
+        /// <summary>
+        /// The camera to billboard toward. Caches <see cref="Camera.main"/> (whose
+        /// getter does a tagged search) and only re-resolves when the cached camera
+        /// has been destroyed, so the per-frame cost is a null check in the common case.
+        /// </summary>
+        private Camera ResolveCamera()
+        {
+            if (cachedCamera == null)
+                cachedCamera = Camera.main != null ? Camera.main : Camera.current;
+            return cachedCamera;
         }
 
         /// <summary>Queue one billboarded instance, flushing automatically at the 1023 cap.</summary>
