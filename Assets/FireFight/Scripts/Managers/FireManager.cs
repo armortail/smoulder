@@ -68,6 +68,13 @@ namespace FireFight.Managers
         /// <summary>The underlying grid (read-only access for visualizers, etc.).</summary>
         public FireGrid Grid { get; private set; }
 
+        /// <summary>
+        /// Incremented once per simulation tick. Visualizers compare it against the
+        /// value they last processed to detect whether the grid may have changed,
+        /// so they can avoid redundant full-grid work on frames between ticks.
+        /// </summary>
+        public int Generation { get; private set; }
+
         private FireSim simulation;
         private SmokeSim smokeSimulation;
         private float tickTimer;
@@ -201,6 +208,10 @@ namespace FireFight.Managers
                 tickTimer -= config.TickInterval;
                 simulation.Tick();
                 smokeSimulation.Tick();
+                // Bump once per simulation step. Renderers/visualizers can compare
+                // this to know the grid may have changed since they last looked,
+                // and skip rebuilding work on frames where it has not.
+                Generation++;
             }
 
             // Optional debug readout (moved here from the old FireDemo component).
@@ -225,6 +236,7 @@ namespace FireFight.Managers
             if (cell == null || cell.fuel <= 0f) return false;
             cell.state = FireState.Burning;
             cell.heat = config.ignitionThreshold;
+            simulation.MarkActive(gridPos);
             return true;
         }
 
@@ -244,6 +256,7 @@ namespace FireFight.Managers
             {
                 cell.state = FireState.Unburned; // can relight if fuel remains
             }
+            simulation.MarkActive(gridPos);
         }
 
         // ---- Extinguishing: ways to kill fire ----
@@ -264,6 +277,7 @@ namespace FireFight.Managers
 
             if (cell.state == FireState.Burning && cell.heat < config.ignitionThreshold)
                 cell.state = FireState.Unburned; // can relight once it dries
+            simulation.MarkActive(gridPos);
         }
 
         // ---- Oxygen side: smother with foam / CO2 / blanket / sand ----
@@ -287,6 +301,7 @@ namespace FireFight.Managers
                 cell.heat = 0f;
                 cell.state = FireState.Unburned; // can relight once the coating decays
             }
+            simulation.MarkActive(gridPos);
         }
 
         /// <summary>Smother a sphere of cells (foam burst / CO2 cloud / extinguisher). Falls off to the edge.</summary>
@@ -300,7 +315,10 @@ namespace FireFight.Managers
         public void SmotherBounds(Bounds worldBounds, float coating)
         {
             ForEachCellInBounds(worldBounds, cell =>
-                cell.coating = Mathf.Clamp01(cell.coating + coating));
+            {
+                cell.coating = Mathf.Clamp01(cell.coating + coating);
+                simulation.MarkActive(cell.gridPosition);
+            });
             // Knock down any flames the blanket now seals.
             ForEachCellInBounds(worldBounds, cell =>
             {
@@ -334,6 +352,7 @@ namespace FireFight.Managers
                 cell.heat = 0f;
                 cell.state = FireState.Burned;
             }
+            simulation.MarkActive(gridPos);
         }
 
         /// <summary>Fully clear fuel from one cell (hard firebreak).</summary>
@@ -347,6 +366,7 @@ namespace FireFight.Managers
                 cell.fuel = 0f;
                 cell.heat = 0f;
                 cell.state = FireState.Burned;
+                simulation.MarkActive(cell.gridPosition);
             });
         }
 
@@ -368,6 +388,7 @@ namespace FireFight.Managers
                 cell.heat = 0f;
                 cell.state = FireState.Unburned; // knocked down; may flash back if reheated
             }
+            simulation.MarkActive(gridPos);
         }
 
         /// <summary>Knock down every flame in a sphere (handheld extinguisher sweep).</summary>
@@ -385,6 +406,7 @@ namespace FireFight.Managers
                 {
                     cell.heat = 0f;
                     cell.state = FireState.Unburned;
+                    simulation.MarkActive(cell.gridPosition);
                 }
             });
         }
@@ -455,6 +477,7 @@ namespace FireFight.Managers
                 cell.wetness = Mathf.Clamp01(cell.wetness + wetness);
                 if (cell.state == FireState.Burning && cell.heat < config.ignitionThreshold)
                     cell.state = FireState.Unburned;
+                simulation.MarkActive(cell.gridPosition);
             });
         }
 
@@ -501,6 +524,7 @@ namespace FireFight.Managers
                 {
                     cell.state = FireState.Burning;
                     cell.heat = config.ignitionThreshold;
+                    simulation.MarkActive(cell.gridPosition);
                 }
             });
         }

@@ -73,6 +73,15 @@ namespace FireFight.Managers
         // re-resolve when the cached camera is destroyed (e.g. a scene change).
         private Camera cachedCamera;
 
+        // Tracks the manager generation we last drew for, and whether that tick had
+        // anything to draw. When the grid has not changed since the last tick AND
+        // there was nothing drawable, we skip the whole per-cell loop: with no fire,
+        // heat, smoke or water there is nothing for flicker or billboarding to
+        // animate anyway. While content IS present we still rebuild every frame so
+        // flames flicker and quads keep facing the moving camera.
+        private int lastGeneration = -1;
+        private bool hadDrawableContent;
+
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
@@ -100,6 +109,16 @@ namespace FireFight.Managers
             FireGrid grid = manager != null ? manager.Grid : null;
             if (grid == null) return; // grid only exists in Play mode
 
+            // Skip the full-grid scan on frames where the simulation has not advanced
+            // since we last looked AND the last tick had nothing to draw. With no fire,
+            // heat, smoke or water there is nothing for flicker/billboarding to animate,
+            // so iterating every cell each frame would be pure waste. As soon as the
+            // grid changes (new generation) we always rebuild, and while content is
+            // present we rebuild every frame so flames flicker and quads face the camera.
+            int generation = manager.Generation;
+            if (generation == lastGeneration && !hadDrawableContent) return;
+            lastGeneration = generation;
+
             Camera targetCamera = ResolveCamera();
             // Billboard toward the camera if we have one; otherwise face up.
             Quaternion facing = targetCamera != null
@@ -117,6 +136,7 @@ namespace FireFight.Managers
             smokeBatch.Clear(); smokeColors.Clear();
             waterBatch.Clear(); waterColors.Clear();
 
+            bool anyDrawn = false;
             FireCell[] cells = grid.Cells;
             for (int i = 0; i < cells.Length; i++)
             {
@@ -130,6 +150,7 @@ namespace FireFight.Managers
                     AddInstance(waterBatch, waterColors,
                         world, facing, baseSize * 0.9f,
                         new Vector4(waterColor.r, waterColor.g, waterColor.b, a));
+                    anyDrawn = true;
                 }
 
                 // ---- Smoke (drawn by its own material) ----
@@ -139,6 +160,7 @@ namespace FireFight.Managers
                     AddInstance(smokeBatch, smokeColors,
                         world, facing, baseSize,
                         new Vector4(smokeColor.r, smokeColor.g, smokeColor.b, a));
+                    anyDrawn = true;
                 }
 
                 // ---- Fire / heat (emissive material) ----
@@ -149,6 +171,7 @@ namespace FireFight.Managers
                     AddInstance(fireBatch, fireColors,
                         world, facing, baseSize * flicker,
                         new Vector4(col.r, col.g, col.b, 1f));
+                    anyDrawn = true;
                 }
                 else if (showHeat && c.state == FireState.Unburned && c.heat > 0f)
                 {
@@ -158,8 +181,13 @@ namespace FireFight.Managers
                     AddInstance(fireBatch, fireColors,
                         world, facing, baseSize * (0.5f + 0.5f * t),
                         new Vector4(col.r, col.g, col.b, Mathf.Lerp(0.3f, 1f, t)));
+                    anyDrawn = true;
                 }
             }
+
+            // Remember whether this tick produced anything, so the guard above can
+            // skip untouched frames until the next simulation step.
+            hadDrawableContent = anyDrawn;
 
             FlushBatches();
         }
