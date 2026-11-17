@@ -12,7 +12,16 @@ public class NPCMovement : MonoBehaviour
     [SerializeField, Min(0.01f)] private float destinationSnapDistance = 0.5f;
     [Header("Firefighting")]
     [SerializeField] private HoseController hose;
+
+    [Tooltip("Default standoff from the fire when no attack posture is specified (metres).")]
     [SerializeField, Min(0.5f)] private float extinguishStandoff = 4f;
+
+    [Tooltip("Standoff for an OFFENSIVE order: aggressive, moves in close.")]
+    [SerializeField, Min(0.5f)] private float offensiveStandoff = 2f;
+
+    [Tooltip("Standoff for a DEFENSIVE order: hangs back and attacks from range.")]
+    [SerializeField, Min(0.5f)] private float defensiveStandoff = 7f;
+
     [SerializeField] private FireManager fireManager;
     [SerializeField, Min(0.5f)] private float fireWorkRadius = 2.5f;
     [SerializeField, Min(0f)] private float postExtinguishSoakSeconds = 0.6f;
@@ -31,6 +40,10 @@ public class NPCMovement : MonoBehaviour
     private float nextDoorCheckTime;
     private readonly RaycastHit[] sightHits = new RaycastHit[32];
 
+    // Standoff actually used by the current job, chosen from the attack posture when
+    // the job starts. Both approach and spray-range checks read this one value.
+    private float activeStandoff = 4f;
+
     public bool IsExtinguishing => extinguishing;
 
     private void Awake()
@@ -39,6 +52,7 @@ public class NPCMovement : MonoBehaviour
         commandPath = new NavMeshPath();
         if (hose == null) hose = GetComponentInChildren<HoseController>();
         if (fireManager == null) fireManager = FireManagerLocator.Resolve(fireManager);
+        activeStandoff = extinguishStandoff;
     }
 
     public bool MoveTo(Vector3 targetPosition)
@@ -49,10 +63,23 @@ public class NPCMovement : MonoBehaviour
         return true;
     }
 
-    public bool ExtinguishAt(Flammable target)
+    /// <summary>
+    /// Fight the given fire with a default (unspecified) attack posture. Kept so
+    /// existing callers compile unchanged; delegates to the posture-aware overload.
+    /// </summary>
+    public bool ExtinguishAt(Flammable target) => ExtinguishAt(target, AttackMode.Unspecified);
+
+    /// <summary>
+    /// Fight the given fire using the requested attack posture. The posture only
+    /// changes how close the firefighter sets up (see <see cref="StandoffFor"/>):
+    /// offensive moves in tight, defensive hangs back, unspecified uses the default.
+    /// </summary>
+    public bool ExtinguishAt(Flammable target, AttackMode mode)
     {
         if (hose == null || !NPCFireTarget.TryGetBurningPoint(target, hose.Origin, out Vector3 point))
             return false;
+        // Choose the standoff BEFORE approaching so BeginApproach plans to the right distance.
+        activeStandoff = StandoffFor(mode);
         if (!BeginApproach(point, target)) return false;
         burningObject = target;
         tracksObject = true;
@@ -84,6 +111,17 @@ public class NPCMovement : MonoBehaviour
     private bool AgentReady => isActiveAndEnabled && agent != null &&
         agent.isActiveAndEnabled && agent.isOnNavMesh;
 
+    /// <summary>Standoff distance for an attack posture, from the Inspector values.</summary>
+    private float StandoffFor(AttackMode mode)
+    {
+        switch (mode)
+        {
+            case AttackMode.Offensive: return offensiveStandoff;
+            case AttackMode.Defensive: return defensiveStandoff;
+            default: return extinguishStandoff;
+        }
+    }
+
     private bool BeginApproach(Vector3 point, Flammable target)
     {
         if (!AgentReady || hose == null || !hose.isActiveAndEnabled || hose.SprayRange <= 0.5f)
@@ -99,7 +137,7 @@ public class NPCMovement : MonoBehaviour
         outward.y = 0f;
         if (outward.sqrMagnitude < 0.001f) outward = -transform.forward;
         outward.Normalize();
-        float distance = Mathf.Min(extinguishStandoff, hose.SprayRange - 0.5f);
+        float distance = Mathf.Min(activeStandoff, hose.SprayRange - 0.5f);
         Vector3 nozzleOffset = hose.Origin - transform.position;
         var filter = new NavMeshQueryFilter { agentTypeID = agent.agentTypeID, areaMask = agent.areaMask };
         // Try nearby sides of the object instead of falling back to walking into the fire.
@@ -125,7 +163,7 @@ public class NPCMovement : MonoBehaviour
 
     private bool WithinSprayDistance(Vector3 point)
     {
-        float reach = Mathf.Min(extinguishStandoff + destinationSnapDistance,
+        float reach = Mathf.Min(activeStandoff + destinationSnapDistance,
             hose.SprayRange - 0.1f);
         Vector3 horizontal = point - transform.position;
         horizontal.y = 0f;

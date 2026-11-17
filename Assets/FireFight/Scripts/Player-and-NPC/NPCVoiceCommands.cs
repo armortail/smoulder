@@ -1,7 +1,6 @@
-using System.Linq;
-using System.Text.RegularExpressions;
 using UnityEngine;
 using FireFight.Managers;
+using FireFight.Core;
 
 namespace FireFight
 {
@@ -13,50 +12,56 @@ namespace FireFight
         [SerializeField] private NPCDestinationMarkers destinationMarkers;
 
         public enum Recipient { Danny, Simon, Everyone }
-        public enum Order { Move, FightFire, StopSpraying }
+        public enum Order { Move, FightFire, StopSpraying, Evacuate }
 
+        // Radio-acknowledgement channel. Defaults to the console responder; a test or
+        // a future audio/subtitle system can supply its own via SetResponder.
+        private IRadioResponder responder = new ConsoleRadioResponder();
+
+        /// <summary>Swap the acknowledgement sink (e.g. for spoken audio or tests).</summary>
+        public void SetResponder(IRadioResponder newResponder)
+        {
+            responder = newResponder ?? new ConsoleRadioResponder();
+        }
+
+        /// <summary>
+        /// Parse a transcript into a recipient + order using the firefighter-lingo
+        /// parser. Kept as a static pass-through (mapping the parser's enums to this
+        /// class's enums) so existing callers and tests keep working unchanged. Note
+        /// it drops tactical modifiers; <see cref="TryExecuteCommand"/> uses the full
+        /// parse so it can honour the attack posture.
+        /// </summary>
         public static bool TryParseCommand(string transcript, out Recipient recipient, out Order order)
         {
             recipient = default;
             order = default;
-            if (string.IsNullOrWhiteSpace(transcript)) return false;
-            string text = Regex.Replace(transcript.ToLowerInvariant().Replace('?', '\''), @"[^\w\s]", "");
-            string[] words = Regex.Split(text.Trim(), @"\s+");
-            if (words.Any(word => word == "dont" || word == "not" || word == "never" ||
-                word == "cancel" || word == "cant" || word == "cannot" || word == "except"))
-                return false;
+            if (!FirefighterCommandParser.TryParse(transcript, out var command)) return false;
 
-            bool hasDanny = words.Contains("danny");
-            bool hasSimon = words.Contains("simon");
-            bool hasEveryone = words.Contains("everyone") || words.Contains("both");
-            if ((hasDanny ? 1 : 0) + (hasSimon ? 1 : 0) + (hasEveryone ? 1 : 0) != 1)
-                return false;
-            recipient = hasDanny ? Recipient.Danny : hasSimon ? Recipient.Simon : Recipient.Everyone;
+            recipient = MapRecipient(command.Recipient);
+            order = MapOrder(command.Order);
+            return true;
+        }
 
-            string command = string.Join(" ", words.Where(word =>
-                word == "move" || word == "here" || word == "fight" || word == "the" ||
-                word == "fire" || word == "extinguish" || word == "spray" ||
-                word == "shoot" || word == "water" || word == "stop" || word == "spraying"));
-            switch (command)
+        // Explicit maps so the two enum sets stay independent (reordering one will
+        // not silently mis-route commands the way a numeric cast could).
+        private static Recipient MapRecipient(FirefighterCommandParser.Recipient r)
+        {
+            switch (r)
             {
-                case "move here":
-                    order = Order.Move;
-                    return recipient != Recipient.Everyone;
-                case "fight the fire":
-                case "fight fire":
-                case "extinguish the fire":
-                case "extinguish fire":
-                case "spray water":
-                case "shoot water":
-                    order = Order.FightFire;
-                    return true;
-                case "stop spraying":
-                case "stop water":
-                case "stop spraying water":
-                    order = Order.StopSpraying;
-                    return true;
-                default:
-                    return false;
+                case FirefighterCommandParser.Recipient.Danny: return Recipient.Danny;
+                case FirefighterCommandParser.Recipient.Simon: return Recipient.Simon;
+                default: return Recipient.Everyone;
+            }
+        }
+
+        private static Order MapOrder(FirefighterCommandParser.Order o)
+        {
+            switch (o)
+            {
+                case FirefighterCommandParser.Order.Move: return Order.Move;
+                case FirefighterCommandParser.Order.FightFire: return Order.FightFire;
+                case FirefighterCommandParser.Order.Evacuate: return Order.Evacuate;
+                default: return Order.StopSpraying;
             }
         }
 
@@ -64,56 +69,98 @@ namespace FireFight
 
         public bool TryExecuteCommand(string transcript)
         {
-            if (!TryParseCommand(transcript, out Recipient recipient, out Order order))
+            if (!FirefighterCommandParser.TryParse(transcript, out var command))
             {
                 Debug.Log("Unrecognized or ambiguous voice command: " + transcript, this);
                 return false;
             }
 
-            if (recipient == Recipient.Danny) return Issue(danny, order);
-            if (recipient == Recipient.Simon) return Issue(simon, order);
+            Recipient recipient = MapRecipient(command.Recipient);
+            Order order = MapOrder(command.Order);
+            AttackMode mode = command.Mode;
 
-            bool dannyAccepted = Issue(danny, order);
-            bool simonAccepted = simon != danny && Issue(simon, order);
+            if (recipient == Recipient.Danny) return Issue(danny, "Danny", order, mode);
+            if (recipient == Recipient.Simon) return Issue(simon, "Simon", order, mode);
+
+            bool dannyAccepted = Issue(danny, "Danny", order, mode);
+            bool simonAccepted = simon != danny && Issue(simon, "Simon", order, mode);
             return dannyAccepted || simonAccepted;
         }
 
-        private bool Issue(NPCMovement npc, Order order)
+        /// <summary>
+        /// Hand one order to one firefighter and voice the radio acknowledgement.
+        /// Returns true if the NPC accepted the order.
+        /// </summary>
+        private bool Issue(NPCMovement npc, string unitName, Order order, AttackMode mode)
         {
             if (npc == null)
             {
-                Debug.Log("The requested NPC is not assigned.", this);
+                responder.Report(unitName, string.Empty, CommandOutcome.Unavailable);
                 return false;
             }
 
-            if (order == Order.StopSpraying)
+            switch (order)
             {
-                npc.CancelExtinguish();
-                Debug.Log(npc.name + ": stopped firefighting.", this);
-                return true;
+                case Order.StopSpraying:
+                    npc.CancelExtinguish();
+                    responder.Report(unitName, "holding the line", CommandOutcome.Accepted);
+                    return true;
+
+                case Order.Evacuate:
+                    // For now this stops all firefighting activity (the most meaningful
+                    // response available). A future step routes the NPC to a safe point.
+                    npc.CancelExtinguish();
+                    responder.Report(unitName, "backing out", CommandOutcome.Accepted);
+                    return true;
+
+                case Order.FightFire:
+                    return IssueFightFire(npc, unitName, mode);
+
+                default: // Order.Move
+                    return IssueMove(npc, unitName);
+            }
+        }
+
+        private bool IssueFightFire(NPCMovement npc, string unitName, AttackMode mode)
+        {
+            if (destinationMarkers == null ||
+                !destinationMarkers.TryGetFireTarget(npc, out Flammable burningObject))
+            {
+                responder.Report(unitName,
+                    "no fire marked, place my marker on the fire", CommandOutcome.Rejected);
+                return false;
             }
 
-            if (order == Order.FightFire)
-            {
-                if (destinationMarkers == null ||
-                    !destinationMarkers.TryGetFireTarget(npc, out Flammable burningObject))
-                {
-                    Debug.Log("Place " + npc.name + "'s marker on or near a burning object first.", this);
-                    return false;
-                }
-                bool accepted = npc.ExtinguishAt(burningObject);
-                Debug.Log(npc.name + (accepted ? ": fighting the marked fire." :
-                    ": cannot reach a safe spraying position for that fire."), this);
-                return accepted;
-            }
+            bool accepted = npc.ExtinguishAt(burningObject, mode);
+            responder.Report(unitName, FightFireAcknowledgement(mode),
+                accepted ? CommandOutcome.Accepted : CommandOutcome.Rejected);
+            return accepted;
+        }
 
+        private bool IssueMove(NPCMovement npc, string unitName)
+        {
             if (destinationMarkers == null ||
                 !destinationMarkers.TryGetDestination(npc, out Vector3 destination))
             {
-                Debug.Log("Place " + npc.name + "'s movement marker first.", this);
+                responder.Report(unitName, "no position marked", CommandOutcome.Rejected);
                 return false;
             }
-            return npc.MoveTo(destination);
+
+            bool accepted = npc.MoveTo(destination);
+            responder.Report(unitName, "moving up",
+                accepted ? CommandOutcome.Accepted : CommandOutcome.Rejected);
+            return accepted;
+        }
+
+        /// <summary>Radio phrase for an attack order, flavoured by posture.</summary>
+        private static string FightFireAcknowledgement(AttackMode mode)
+        {
+            switch (mode)
+            {
+                case AttackMode.Offensive: return "going offensive, interior attack";
+                case AttackMode.Defensive: return "going defensive, exterior attack";
+                default: return "charging the line";
+            }
         }
     }
 }
